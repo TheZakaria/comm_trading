@@ -435,7 +435,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sentiment_source",
         type=str,
-        default="competitor_label",
+        default="label",
         help="Choose which sentiment label column to use for trading."
     )
     parser.add_argument(
