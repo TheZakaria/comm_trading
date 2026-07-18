@@ -1,3 +1,4 @@
+# from ml_fx_trading.data_processing.data_processor import ProcessedData
 from models import FinancialForecastingModel
 import numpy as np
 import torch
@@ -5,36 +6,32 @@ from sklearn.preprocessing import MinMaxScaler
 from chronos import BaseChronosPipeline, Chronos2Pipeline
 from datetime import datetime, timedelta
 class Chronos2FinancialForecastingModel(FinancialForecastingModel):
-    """Financial forecasting model using Amazon's Chronos-bolt, a pre-trained transformer for zero-shot forecasting"""
+    """Financial forecasting model using Amazon's Chronos-2, predicting all variables and unscaling natively."""
 
-    def __init__(self, data_processor, model_config):
+    def __init__(self, model_config, data_processor):
         self.data_processor = data_processor
         self.model_config = model_config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.MODEL_NAME = "s3://autogluon/chronos-2/"
         self.forecaster = self.initialize_model()
 
-        # The scaler and target column info will be loaded when `generate_predictions` is called with ProcessedData
+        # Placeholders to be set dynamically during prediction
         self.llm_scaler: MinMaxScaler = None
         self.target_column_index: int = -1
-        self.target_column_min_val: float = None
-        self.target_column_scale_val: float = None
-
 
     def initialize_model(self):
         """Load pre-trained predictor"""
         try:
-            print(f"\nLoading Chronos-Bolt model...")
-            # Ensure proper device_map for Chronos 2
+            print(f"\nLoading Chronos-2 model...")
             pipeline: Chronos2Pipeline = BaseChronosPipeline.from_pretrained(
-                self.MODEL_NAME,
-                device_map="auto" if torch.cuda.is_available() else None # "auto" for multi-GPU, None for CPU
+                self.MODEL_NAME, 
+                device_map="auto" if torch.cuda.is_available() else None
             )
-            print("Chronos-Bolt model loaded successfully!")
+            print("Chronos-2 model loaded successfully!")
             return pipeline
         except Exception as e:
             print(f"Error initializing Chronos model: {e}")
-            raise # Re-raise to prevent silent failures
+            raise
 
     def _align_test_targets(self, **test_series):
         """Process all test data series by applying the input chunk length offset."""
@@ -49,82 +46,83 @@ class Chronos2FinancialForecastingModel(FinancialForecastingModel):
         return None
 
     def predict_future_values(self, input_sequences):
-            """Make prediction for a batch of input sequences (multivariate input)"""
+        """Make prediction for a batch of input sequences, returning forecasts for all features."""
+        # Input shape: (batch_size, input_chunk_length, num_features)
+        batch_array = np.array(input_sequences, dtype=np.float32)
 
-            # input_sequences will have shape (batch_size, input_chunk_length, num_features)
-            batch_array = np.array(input_sequences, dtype=np.float32)
+        # Transpose from (batch_size, sequence_length, num_features) 
+        # to (batch_size, num_features, sequence_length) to match Chronos-2 specifications
+        batch_array = batch_array.transpose(0, 2, 1)
 
-            # Chronos 2 expects input in (batch_size, num_features, sequence_length) format
-            # Transpose from (batch_size, sequence_length, num_features) to (batch_size, num_features, sequence_length)
-            inputs = torch.FloatTensor(batch_array.transpose(0, 2, 1)).to(self.device) 
-            
-            try:
-                with torch.no_grad():
-                    quantiles, mean = self.forecaster.predict_quantiles(
-                        inputs,
-                        prediction_length=self.model_config.OUTPUT_CHUNK_LENGTH
-                    )
-                    
-                    # 'mean' will have shape (batch_size, num_features, prediction_length)
-                    # We need to extract the predictions for the TARGET ticker only
-                    # and then select the last step in the prediction horizon
-                    
-                    # Extract the target ticker's predictions across the prediction_length
-                    target_ticker_predictions = np.array(mean)[:, self.target_column_index, :] # Shape: (batch_size, prediction_length)
-                    
-                    return target_ticker_predictions
+        inputs = torch.FloatTensor(batch_array).to(self.device)
+        try:
+            with torch.no_grad():
+                # quantiles: (batch_size, num_features, prediction_length, num_quantiles)
+                # mean: (batch_size, num_features, prediction_length)
+                quantiles, mean = self.forecaster.predict_quantiles(
+                    inputs,
+                    prediction_length=self.model_config.OUTPUT_CHUNK_LENGTH
+                )
+                
+                # Safely convert PyTorch tensor to numpy array
+                if isinstance(mean, torch.Tensor):
+                    return mean.cpu().numpy()
+                return np.array(mean)
 
-            except Exception as e:
-                print(f"Error during prediction: {e}")
-                # Fallback: return the last known value for the target ticker from the input sequence
-                return np.array([seq[-1, self.target_column_index] for seq in input_sequences])
+        except Exception as e:
+            print(f"Error during prediction: {e}")
+            # Fallback: Tile the last known value for each feature across the prediction length
+            last_known = input_sequences[:, -1, :, None] # Shape: (batch_size, num_features, 1)
+            fallback = np.tile(last_known, (1, 1, self.model_config.OUTPUT_CHUNK_LENGTH))
+            return fallback
 
-    def generate_predictions(self, processed_data: ProcessedData):
+    def generate_predictions(self, processed_data):#: ProcessedData):
         """Generate predictions using sliding window with batching for multivariate input."""
         import time
         start_time = time.time()
         print("Starting prediction generation...")
 
-        # Initialize scaler and target column info from processed_data
+        # Extract scaling and index metadata from ProcessedData
         self.llm_scaler = processed_data.llm_scaler
-        
-        # Get the index of the target currency's mid_price column
         self.target_column_index = processed_data.mid_price_columns.index(processed_data.base_ticker_mid_price_col_name)
-        
-        # Get min and scale values for the target column for manual inverse transform
-        self.target_column_min_val = self.llm_scaler.min_[self.target_column_index]
-        self.target_column_scale_val = self.llm_scaler.scale_[self.target_column_index]
 
-        data = processed_data.llm_test_scaled # This is (n_samples, num_features)
+        data = processed_data.llm_test_scaled  # Shape: (num_timesteps, num_features)
         num_timesteps, num_features = data.shape
         num_predictions = num_timesteps - self.model_config.INPUT_CHUNK_LENGTH
 
         if num_predictions <= 0:
             raise ValueError(f"Not enough data points. Need at least {self.model_config.INPUT_CHUNK_LENGTH + 1} timesteps, got {num_timesteps}")
         
-        # This array will store only the predictions for the TARGET ticker
-        all_predictions_scaled = np.empty(num_predictions, dtype=np.float32)
+        # Preallocate 2D array to hold scaled predictions for ALL features at our target forecast horizon
+        # Shape: (num_predictions, num_features)
+        all_predictions_scaled = np.empty((num_predictions, num_features), dtype=np.float32)
 
         for batch_idx in range(0, num_predictions, self.model_config.EVAL_BATCH_SIZE):
             batch_start = batch_idx
             batch_end = min(batch_idx + self.model_config.EVAL_BATCH_SIZE, num_predictions)
-            if batch_idx % (self.model_config.EVAL_BATCH_SIZE * 1000) == 0: # Adjusted frequency for large datasets
+            
+            if batch_idx % (self.model_config.EVAL_BATCH_SIZE * 1000) == 0:
                 elapsed = time.time() - start_time
                 print(f"Processing batch {batch_idx} - {batch_end} / {num_predictions}. Elapsed time: {elapsed:.2f}s")
                 
-            # Create a batch of multivariate input sequences
-            # Each sequence will be (INPUT_CHUNK_LENGTH, num_features)
+            # Extract multivariate sliding window sequences
             indices = np.arange(batch_start, batch_end)[:, None] + np.arange(self.model_config.INPUT_CHUNK_LENGTH)
             batch_input = data[indices] # Shape: (batch_size, INPUT_CHUNK_LENGTH, num_features)
 
-            # predict_future_values returns predictions for the TARGET ticker of shape (batch_size, OUTPUT_CHUNK_LENGTH)
-            predictions_for_target_ticker = self.predict_future_values(batch_input)
+            # Get predictions for all features: (batch_size, num_features, OUTPUT_CHUNK_LENGTH)
+            predictions = self.predict_future_values(batch_input)
 
-            # Store the last step of the prediction horizon for each batch item
-            all_predictions_scaled[batch_start:batch_end] = predictions_for_target_ticker[:, self.model_config.OUTPUT_CHUNK_LENGTH - 1]
+            # Select the final forecasting horizon step for all features
+            # Shape: (batch_size, num_features)
+            target_step_predictions = predictions[:, :, self.model_config.OUTPUT_CHUNK_LENGTH - 1]
 
-        # Inverse transform the scaled predictions for the target ticker
-        # We use the stored min_ and scale_ values for the specific target column
-        predicted_mid_prices = (all_predictions_scaled / self.target_column_scale_val) + self.target_column_min_val
-        
-        return predicted_mid_prices.ravel().tolist()
+            # Place predictions into our preallocated array
+            all_predictions_scaled[batch_start:batch_end] = target_step_predictions
+
+        # 1. Unscale predictions for all variables simultaneously using the scaler object natively
+        all_predictions_unscaled = self.llm_scaler.inverse_transform(all_predictions_scaled)
+
+        # 2. Extract only the target mid prices from the unscaled output array
+        predicted_mid_prices = all_predictions_unscaled[:, self.target_column_index].ravel().tolist()
+
+        return predicted_mid_prices

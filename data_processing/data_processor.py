@@ -61,8 +61,8 @@ class DataProcessor:
 
         def process_and_align(split_name, config_path):
             path_to_data = os.path.dirname(config_path)
-            df_1_name = f"usdaus-fx-{split_name}.csv"
-            df_2_name = f"usdcny-fx-{split_name}.csv"
+            df_1_name = f"usdgbp-fx-{split_name}.csv"
+            df_2_name = f"usdeur-fx-{split_name}.csv"
             
             path_1 = os.path.join(path_to_data, df_1_name)
             path_2 = os.path.join(path_to_data, df_2_name)

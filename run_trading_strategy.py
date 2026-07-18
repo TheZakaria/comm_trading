@@ -3,7 +3,7 @@ import os
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 from utils import FXTradingConfig
 from data_processing import DataProcessor
-from models import DartsFinancialForecastingModel, ChronosFinancialForecastingModel, TotoFinancialForecastingModel
+from models import DartsFinancialForecastingModel, ChronosFinancialForecastingModel, TotoFinancialForecastingModel, Chronos2FinancialForecastingModel
 import numpy as np
 import argparse
 from strategies import TradingStrategy
@@ -114,6 +114,9 @@ def run_ml_based_trading_strategies(fx_trading_config):
     elif fx_trading_config.MODEL_NAME == 'chronos':
         predictor = ChronosFinancialForecastingModel(fx_trading_config, processed_data.llm_scaler)
         predicted_values = predictor.generate_predictions(processed_data.llm_test_scaled)
+    elif fx_trading_config.MODEL_NAME == 'chronos2':
+        predictor = Chronos2FinancialForecastingModel(fx_trading_config, processed_data.llm_scaler)
+        predicted_values = predictor.generate_predictions(processed_data)
     elif fx_trading_config.MODEL_NAME == 'ensemble':
         # Darts models
         predictor1 = DartsFinancialForecastingModel(fx_trading_config, processed_data.darts_scaler)
@@ -128,10 +131,13 @@ def run_ml_based_trading_strategies(fx_trading_config):
         predictor3 = TotoFinancialForecastingModel(fx_trading_config, processed_data.llm_scaler)
         predicted_values3 = predictor3.generate_predictions(processed_data.llm_test_scaled)
 
+        predictor4 = Chronos2FinancialForecastingModel(fx_trading_config, processed_data.llm_scaler)
+        predicted_values4 = predictor4.generate_predictions(processed_data)
         predicted_values = {
             **predicted_values1,
             "chronos": predicted_values2,
-            "toto": predicted_values3
+            "toto": predicted_values3,
+            "chronos2": predicted_values4
         }
     else:
         predictor = DartsFinancialForecastingModel(fx_trading_config, processed_data.darts_scaler)
@@ -384,6 +390,7 @@ if __name__ == "__main__":
             "tcn",
             "toto",
             "chronos",
+            "chronos2",
             "ensemble",
         ],
         default="tcn",
