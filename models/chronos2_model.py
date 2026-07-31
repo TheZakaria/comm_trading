@@ -12,7 +12,7 @@ class Chronos2FinancialForecastingModel(FinancialForecastingModel):
         self.data_processor = data_processor
         self.model_config = model_config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.MODEL_NAME = "s3://autogluon/chronos-2/"
+        self.MODEL_NAME = "amazon/chronos-2"
         self.forecaster = self.initialize_model()
 
         # Placeholders to be set dynamically during prediction
@@ -30,6 +30,8 @@ class Chronos2FinancialForecastingModel(FinancialForecastingModel):
             print("Chronos-2 model loaded successfully!")
             return pipeline
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"Error initializing Chronos model: {e}")
             raise
 
@@ -54,7 +56,7 @@ class Chronos2FinancialForecastingModel(FinancialForecastingModel):
         # to (batch_size, num_features, sequence_length) to match Chronos-2 specifications
         batch_array = batch_array.transpose(0, 2, 1)
 
-        inputs = torch.FloatTensor(batch_array).to(self.device)
+        inputs = torch.from_numpy(batch_array).float()
         try:
             with torch.no_grad():
                 # quantiles: (batch_size, num_features, prediction_length, num_quantiles)
@@ -63,11 +65,8 @@ class Chronos2FinancialForecastingModel(FinancialForecastingModel):
                     inputs,
                     prediction_length=self.model_config.OUTPUT_CHUNK_LENGTH
                 )
-                
-                # Safely convert PyTorch tensor to numpy array
-                if isinstance(mean, torch.Tensor):
-                    return mean.cpu().numpy()
-                return np.array(mean)
+                preds = np.array(mean)
+            return preds
 
         except Exception as e:
             print(f"Error during prediction: {e}")

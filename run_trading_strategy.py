@@ -1,6 +1,7 @@
 # importing to set up reproducibility
 import os
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+os.environ["TORCH_COMPILE_DISABLE"] = "1"
 from utils import FXTradingConfig
 from data_processing import DataProcessor
 from models import DartsFinancialForecastingModel, ChronosFinancialForecastingModel, TotoFinancialForecastingModel, Chronos2FinancialForecastingModel
@@ -334,6 +335,8 @@ def run(args):
     fx_trading_config.THRESHOLD = args.threshold
     fx_trading_config.FAST_MA_WINDOW = args.fast_ma_window
     fx_trading_config.SLOW_MA_WINDOW = args.slow_ma_window
+    fx_trading_config.FIRST_COV = args.first_covariate
+    fx_trading_config.SECOND_COV = args.second_covariate
 
     root_dir = os.path.dirname(os.path.abspath(__file__))
     fx_trading_config.OUTPUT_DIR = os.path.join(root_dir, args.output_dir)
@@ -374,6 +377,8 @@ def print_fx_trading_config(config):
     print(f"  Threshold                 : {config.THRESHOLD}")
     print(f"  Fast MA Window            : {config.FAST_MA_WINDOW}")
     print(f"  Slow MA Window            : {config.SLOW_MA_WINDOW}")
+    print(f"  First Covariate           : {config.FIRST_COV}")
+    print(f"  Second Covariate          : {config.SECOND_COV}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -479,6 +484,18 @@ if __name__ == "__main__":
         type=int,
         default=30,
         help="Window size for slow moving average. Default: 30.")
+    parser.add_argument(
+        "--first_covariate",
+        type=str,
+        default="Corn_future_1d_1min.csv",
+        help="Name of the first covariate to use for trading. Default: 'Corn_future_1d_1min'.",
+        required=False)
+    parser.add_argument(
+        "--second_covariate",
+        type=str,
+        default="Soybeans_1d_1min.csv",
+        help="Name of the second covariate to use for trading. Default: 'Soybeans_1d_1min'.",
+        required=False)
 
     args = parser.parse_args()
 

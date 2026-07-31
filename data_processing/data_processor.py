@@ -38,65 +38,80 @@ class DataProcessor:
     def __init__(self, fx_trading_config):
         self.fx_trading_config = fx_trading_config
 
-    # def load_fx_data(self):
-    #     """Loads the time series data."""
-    #     fx_data_train = pd.read_csv(self.fx_trading_config.FX_DATA_PATH_TRAIN)
-    #     fx_data_val = pd.read_csv(self.fx_trading_config.FX_DATA_PATH_VAL)
-    #     fx_data_test = pd.read_csv(self.fx_trading_config.FX_DATA_PATH_TEST)
-
-    #     for df in [fx_data_train, fx_data_val, fx_data_test]:
-    #         df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    #         df.sort_values("date", inplace=True)
-    #         df.reset_index(drop=True, inplace=True)
-
-    #     return fx_data_train, fx_data_val, fx_data_test
-
+    def get_ticker_suffix(file_path: str) -> str:
+        """Extracts a suffix from the file path or name."""
+        if not file_path:
+            return ""
+        base = os.path.basename(file_path)
+        if "-fx-" in base:
+            return base.split("-fx-")[0]
+        return os.path.splitext(base)[0]
+        
     def load_fx_data(self):
-        # Helper function to dynamically extract the ticker name from any file path
-        # example: "usdeur-fx-train.csv" -> "usdeur"
-        def get_ticker_suffix(path_or_filename):
-            basename = os.path.basename(path_or_filename)
-            name_without_ext = os.path.splitext(basename)[0]
-            return name_without_ext.split("-")[0]
+            """Loads main train/val/test data and left-joins them with the full covariate datasets."""
+            # Detect the data directory from the main training file path
+            train_path = self.fx_trading_config.FX_DATA_PATH_TRAIN
+            path_to_data = os.path.dirname(train_path)
 
-        def process_and_align(split_name, config_path):
-            path_to_data = os.path.dirname(config_path)
-            df_1_name = f"usdgbp-fx-{split_name}.csv"
-            df_2_name = f"usdeur-fx-{split_name}.csv"
-            
-            path_1 = os.path.join(path_to_data, df_1_name)
-            path_2 = os.path.join(path_to_data, df_2_name)
-            
-            df_config = pd.read_csv(config_path)
-            df_1 = pd.read_csv(path_1)
-            df_2 = pd.read_csv(path_2)
-            
-            for df in [df_config, df_1, df_2]:
+            cov1_name = getattr(self.fx_trading_config, "FIRST_COV", None)
+            cov2_name = getattr(self.fx_trading_config, "SECOND_COV", None)
+
+            def load_covariate(cov_name):
+                if not cov_name:
+                    return None
+                
+                # Resolve relative vs absolute path
+                if os.path.exists(cov_name):
+                    path = cov_name
+                else:
+                    path = os.path.join(path_to_data, cov_name)
+                
+                if not os.path.exists(path):
+                    print(f"⚠️ Warning: Covariate file not found at {path}")
+                    return None
+                    
+                df = pd.read_csv(path)
                 df["date"] = pd.to_datetime(df["date"], errors="coerce")
                 df.set_index("date", inplace=True)
-            
-            suffix_config = f"_{get_ticker_suffix(config_path)}"
-            suffix_1 = f"_{get_ticker_suffix(df_1_name)}"
-            suffix_2 = f"_{get_ticker_suffix(df_2_name)}"
-            
-            df_config = df_config.add_suffix(suffix_config)
-            df_1 = df_1.add_suffix(suffix_1)
-            df_2 = df_2.add_suffix(suffix_2)
-            
-            df_aligned = pd.concat([df_config, df_1, df_2], axis=1)
-            df_aligned = df_aligned.sort_index()
-            
-            df_aligned = df_aligned.ffill().dropna()
-            df_aligned = df_aligned.reset_index()
-            
-            return df_aligned
+                
+                # Apply suffix based on filename
+                suffix = f"_{get_ticker_suffix(path)}"
+                df = df.add_suffix(suffix)
+                return df
 
-        # Process all three splits using their respective config paths
-        fx_data_train = process_and_align("train", self.fx_trading_config.FX_DATA_PATH_TRAIN)
-        fx_data_val = process_and_align("val", self.fx_trading_config.FX_DATA_PATH_VAL)
-        fx_data_test = process_and_align("test", self.fx_trading_config.FX_DATA_PATH_TEST)
-        
-        return fx_data_train, fx_data_val, fx_data_test
+            cov1_df = load_covariate(cov1_name)
+            cov2_df = load_covariate(cov2_name)
+
+            def process_and_align(config_path):
+                if not os.path.exists(config_path):
+                    raise FileNotFoundError(f"Main FX split file not found: {config_path}")
+                    
+                df_config = pd.read_csv(config_path)
+                df_config["date"] = pd.to_datetime(df_config["date"], errors="coerce")
+                df_config.set_index("date", inplace=True)
+                
+                suffix_config = f"_{get_ticker_suffix(config_path)}"
+                df_config = df_config.add_suffix(suffix_config)
+
+                df_aligned = df_config
+                if cov1_df is not None:
+                    df_aligned = df_aligned.join(cov1_df, how="left")
+                if cov2_df is not None:
+                    df_aligned = df_aligned.join(cov2_df, how="left")
+                    
+                df_aligned = df_aligned.sort_index()
+                
+                # Clean missing data introduced by frequency mismatches or missing dates
+                df_aligned = df_aligned.ffill().dropna()
+                df_aligned = df_aligned.reset_index()
+                
+                return df_aligned
+
+            fx_data_train = process_and_align(self.fx_trading_config.FX_DATA_PATH_TRAIN)
+            fx_data_val = process_and_align(self.fx_trading_config.FX_DATA_PATH_VAL)
+            fx_data_test = process_and_align(self.fx_trading_config.FX_DATA_PATH_TEST)
+            
+            return fx_data_train, fx_data_val, fx_data_test
 
     def load_news_data(self):
         """Loads the news data."""

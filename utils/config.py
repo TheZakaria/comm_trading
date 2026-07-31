@@ -7,7 +7,7 @@ class FXTradingConfig:
     OUTPUT_CHUNK_LENGTH: int = 1
     N_EPOCHS: int = 3
     TRAIN_BATCH_SIZE: int = 1024
-    EVAL_BATCH_SIZE: int = 128
+    EVAL_BATCH_SIZE: int = 1024
     FX_DATA_PATH_TRAIN: str = "ml_fx_trading/dataset/fx/usdcnh-fx-train.csv"
     FX_DATA_PATH_VAL: str = "ml_fx_trading/dataset/fx/usdcnh-fx-val.csv"
     FX_DATA_PATH_TEST: str = "ml_fx_trading/dataset/fx/usdcnh-fx-test.csv"
@@ -20,9 +20,11 @@ class FXTradingConfig:
     OUTPUT_DIR: str = "results/usd-cnh"
     NEWS_HOLD_MINUTES: int = 3
     ALLOW_NEWS_OVERLAP: bool = False
-    SENTIMENT_SOURCE: str = "competitor_label"
+    SENTIMENT_SOURCE: str = "llama31_p0_r0_pred"
+    FIRST_COV : str = "Corn_future_1d_1min.csv"
+    SECOND_COV : str = "Soybeans_1d_1min.csv"
     KELLY_WINDOW_DAYS: int = None
-    MIN_TRADES_FOR_FULL_KELLY: int = None
+    MIN_TRADES_FOR_FULL_KELLY: int = 12
     MIN_KELLY_FRACTION: float = 0.005
     THRESHOLD: float = 0.0
     FAST_MA_WINDOW: int = 10
